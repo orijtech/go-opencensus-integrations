@@ -42,6 +42,14 @@ func NewClient(ctx context.Context, addr string) *redis.Client {
 	return client
 }
 
+// WrapClient takes a vanilla redis.Client and returns
+// a trace instrumented version
+func WrapClient(ctx context.Context, origClient *redis.Client) *redis.Client {
+	client := origClient.WithContext(ctx)
+	client.WrapProcess(PerCommandTracer(ctx))
+	return client
+}
+
 // PerCommandTracer provides the instrumented WrapProcess function that you can attach to any
 // client. It specifically takes in a context.Context as the first argument because
 // you could be using the same client but wrapping it in a different context.
@@ -49,11 +57,11 @@ func PerCommandTracer(ctx context.Context) func(oldProcess func(cmd redis.Cmder)
 	return func(fn func(cmd redis.Cmder) error) func(redis.Cmder) error {
 		return func(cmd redis.Cmder) error {
 			_, span := trace.StartSpan(ctx, fmt.Sprintf("redis-go/%s", cmd.Name()))
+			defer span.End()
 			err := fn(cmd)
 			if err != nil {
 				span.SetStatus(trace.Status{Code: int32(trace.StatusCodeUnknown), Message: err.Error()})
 			}
-			span.End()
 			return err
 		}
 	}
